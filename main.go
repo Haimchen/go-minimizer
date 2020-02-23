@@ -17,6 +17,8 @@ func check(e error) {
 /* ++++++++++++++++++++++++++++++++++
 Handling the short names
 +++++++++++++++++++++++++++++++ */
+var replacementLetters = "abcdefghijklmnopqrstuvxyz"
+
 type shortNames struct {
 	set map[string]bool
 }
@@ -25,11 +27,15 @@ func NewShortNames() *shortNames {
 	return &shortNames{make(map[string]bool)}
 }
 
-func (shortNames *shortNames) nextShortName(words ...string) (string, bool) {
+// TODO use multiple characters if all single characters are taken
+func (shortNames *shortNames) nextShortName(providedWords ...string) (string, bool) {
+	// add defaults as additonal word
+	words := append(providedWords, replacementLetters)
+
 	// iterate over all characters in all provided words
 	for _, word := range words {
 		for _, char := range word {
-			newName := string(char)
+			newName := strings.ToLower(string(char))
 			_, ok := shortNames.set[newName]
 			// find a character that is not yet in use
 			if !ok {
@@ -40,8 +46,6 @@ func (shortNames *shortNames) nextShortName(words ...string) (string, bool) {
 		}
 	}
 
-	// TODO implement fallback using random character or multiple characters
-
 	return "", false
 }
 
@@ -51,12 +55,26 @@ func isVariable(token string) bool {
 	return token == "var"
 }
 
+func outputFileName(inputFile string) string {
+	suffix := "_min"
+	outputFile := strings.Replace(inputFile, ".go", suffix+".go", 1)
+	// fmt.Printf("Output: %s\n", outputFilePath)
+	return outputFile
+}
+
 func main() {
-	code, err := ioutil.ReadFile("./data/simple.go")
+	if len(os.Args) < 2 {
+		fmt.Println("No file provided. Please provide a filepath as argument")
+		os.Exit(0)
+	}
+
+	inputFilePath := os.Args[1]
+
+	code, err := ioutil.ReadFile(inputFilePath)
 	check(err)
 
-	// TODO create file name dynamically from original file name
-	file, err := os.Create("./data/simple_min.go")
+	outputFilePath := outputFileName(inputFilePath)
+	file, err := os.Create(outputFilePath)
 	check(err)
 	defer file.Close()
 
@@ -65,9 +83,10 @@ func main() {
 
 	var s scanner.Scanner
 	s.Init(strings.NewReader(string(code)))
-	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' ' // don't skip tab and newline
+	// sanner ignores comments, so those will be removed!
+	// don't skip any whitespace while scanning
+	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' '
 
-	// scanner ignores comments and whitespace by defaut!
 	for token := s.Scan(); token != scanner.EOF; token = s.Scan() {
 		tokenText := s.TokenText()
 
@@ -79,23 +98,24 @@ func main() {
 			file.Write([]byte(tokenText))
 		}
 
+		// is it a variable declaration with var?
 		if isVariable(tokenText) {
 			s.Scan() // space
 			s.Scan() // var name
 			varName := s.TokenText()
-			s.Scan() // space
-			s.Scan() // type
-			varType := s.TokenText()
+			// s.Scan() // space
+			// s.Scan() // type or =
+			// varType := s.TokenText()
 			// TODO this should be a function to be reused for other cases (short hand assignment and params)
 
 			// only write a new entry for the variable if it is not already in the map
 			_, variableExists := renamedVariables[varName]
 			if !variableExists {
 				// only write if we found a new shortName
-				newShortName, shortNameFound := shortNames.nextShortName(varType, varName)
+				newShortName, shortNameFound := shortNames.nextShortName( /*varType, */ varName)
 				if shortNameFound {
 					renamedVariables[varName] = newShortName
-					file.Write([]byte(" " + newShortName + " " + varType))
+					file.Write([]byte(" " + newShortName /* + " " + varType*/))
 				}
 			}
 		}
@@ -109,16 +129,9 @@ func main() {
 		fmt.Printf("%s: %s\n", s.Position, tokenText)
 	}
 
+	// DEBUG: output all replaced names
 	for varName, shortName := range renamedVariables {
 		fmt.Printf("%s: %s\n", varName, shortName)
 	}
-
-	// scan again and write everything with updates
-	// can't do it in the same loop, scanner removes all whitespace and code would look horrible
-
-	// replace:
-	// words from the map
-	// exclude? before (
-	// exclude package declaration
 
 }
