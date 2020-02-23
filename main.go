@@ -15,6 +15,70 @@ func check(e error) {
 }
 
 /* ++++++++++++++++++++++++++++++++++
+Handling the read buffer
++++++++++++++++++++++++++++++++ */
+type buffer struct {
+	buffer []string
+	size   int
+}
+
+func NewBuffer(size int) *buffer {
+
+	buf := make([]string, 0, size)
+	return &buffer{buf, size}
+}
+
+func (buffer *buffer) Push(token string) bool {
+	if len(buffer.buffer) == buffer.size {
+		return false
+	}
+	buffer.buffer = append(buffer.buffer, token)
+	return true
+}
+
+func (buffer *buffer) Skim() (string, bool) {
+	length := len(buffer.buffer)
+	if length != buffer.size {
+		return "", false
+	}
+	word := buffer.buffer[0]
+	buffer.buffer = buffer.buffer[1:]
+	return word, true
+}
+
+func (buffer *buffer) Shift() (string, bool) {
+	if len(buffer.buffer) == 0 {
+		return "", false
+	}
+	word := buffer.buffer[0]
+	buffer.buffer = buffer.buffer[1:]
+	return word, true
+}
+
+func (buffer *buffer) Replace(offset int, newWord string) bool {
+	last := len(buffer.buffer) - 1
+	if last-offset < 0 {
+		return false
+	}
+	buffer.buffer[last-offset] = newWord
+	return true
+}
+
+// func (buffer *buffer) Read(pos int) (string, bool) {
+//   if pos+1 > len(buffer.buffer) {
+//     return "", false
+//   }
+//   return buffer.buffer[pos], true
+// }
+//
+// func (buffer *buffer) Print() {
+//   fmt.Println("Printing buffer:")
+//   for _, word := range buffer.buffer {
+//     fmt.Println(word)
+//   }
+// }
+
+/* ++++++++++++++++++++++++++++++++++
 Handling the short names
 +++++++++++++++++++++++++++++++ */
 var replacementLetters = "abcdefghijklmnopqrstuvxyz"
@@ -87,15 +151,19 @@ func main() {
 	// don't skip any whitespace while scanning
 	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' '
 
+	// create the read buffer
+	buffer := NewBuffer(4)
+
 	for token := s.Scan(); token != scanner.EOF; token = s.Scan() {
 		tokenText := s.TokenText()
+		buffer.Push(tokenText)
 
 		// is tokenText a word that needs to be replaced?
 		replacement, exists := renamedVariables[tokenText]
 		if exists {
-			file.Write([]byte(replacement))
-		} else {
-			file.Write([]byte(tokenText))
+			buffer.Replace(0, replacement)
+			// } else {
+			//   file.Write([]byte(tokenText))
 		}
 
 		// is it a variable declaration with var?
@@ -115,9 +183,16 @@ func main() {
 				newShortName, shortNameFound := shortNames.nextShortName( /*varType, */ varName)
 				if shortNameFound {
 					renamedVariables[varName] = newShortName
-					file.Write([]byte(" " + newShortName /* + " " + varType*/))
+					buffer.Push("")
+					buffer.Push(newShortName)
+					// file.Write([]byte(" " + newShortName [> + " " + varType<]))
 				}
 			}
+		}
+
+		tokenToWrite, bufferFull := buffer.Skim()
+		if bufferFull {
+			file.Write([]byte(tokenToWrite))
 		}
 
 		// TODO find variables assigned with :=
@@ -126,7 +201,11 @@ func main() {
 
 		// TODO function return values
 
-		fmt.Printf("%s: %s\n", s.Position, tokenText)
+		// fmt.Printf("%s: %s\n", s.Position, tokenText)
+	}
+	// empty the buffer
+	for token, ok := buffer.Shift(); ok; token, ok = buffer.Shift() {
+		file.Write([]byte(token))
 	}
 
 	// DEBUG: output all replaced names
