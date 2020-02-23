@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"text/scanner"
+	"unicode"
 )
 
 func check(e error) {
@@ -64,19 +65,20 @@ func (buffer *buffer) Replace(offset int, newWord string) bool {
 	return true
 }
 
-// func (buffer *buffer) Read(pos int) (string, bool) {
-//   if pos+1 > len(buffer.buffer) {
-//     return "", false
-//   }
-//   return buffer.buffer[pos], true
-// }
-//
-// func (buffer *buffer) Print() {
-//   fmt.Println("Printing buffer:")
-//   for _, word := range buffer.buffer {
-//     fmt.Println(word)
-//   }
-// }
+func (buffer *buffer) Read(offset int) (string, bool) {
+	last := len(buffer.buffer) - 1
+	if last-offset < 0 {
+		return "", false
+	}
+	return buffer.buffer[last-offset], true
+}
+
+func (buffer *buffer) Print() {
+	fmt.Println("Printing buffer:")
+	for _, word := range buffer.buffer {
+		fmt.Println(word)
+	}
+}
 
 /* ++++++++++++++++++++++++++++++++++
 Handling the short names
@@ -126,6 +128,65 @@ func outputFileName(inputFile string) string {
 	return outputFile
 }
 
+func isWord(whiteSpaceOrWord string) bool {
+	var isSpace bool
+	if len(whiteSpaceOrWord) == 1 {
+		runes := []rune(whiteSpaceOrWord)
+		isSpace = unicode.IsSpace(runes[0])
+	}
+	isEmpty := len(whiteSpaceOrWord) == 0
+
+	return !isSpace && !isEmpty
+}
+func handleShortAssignment(renamedVariables map[string]string, shortNames *shortNames, buffer *buffer) {
+	// bla :=
+	// buffer: [... "bla" , ":", "="]
+	// or:
+	// buffer: [... "bla", " ", ":", "="]
+	colon, _ := buffer.Read(1)
+
+	// the = could also be an assignment only or part of a comparison
+	// we are only interested if there is a : before
+	if colon == ":" {
+		// prev character can be either whitespace or the variable name
+		whiteSpaceOrToken, _ := buffer.Read(2)
+		offset := 2
+		if !isWord(whiteSpaceOrToken) {
+			whiteSpaceOrToken, _ = buffer.Read(3)
+			offset = 3
+		}
+		if isWord(whiteSpaceOrToken) {
+			newShortName, shortNameFound := shortNames.nextShortName(whiteSpaceOrToken)
+			if shortNameFound {
+				renamedVariables[whiteSpaceOrToken] = newShortName
+				buffer.Replace(offset, newShortName)
+			}
+		}
+	}
+}
+
+func handleVar(s *scanner.Scanner, tokenText string, renamedVariables map[string]string, shortNames *shortNames, buffer *buffer) string {
+	s.Scan() // space
+	s.Scan() // var name
+	varName := s.TokenText()
+	var overflow1, overflow2 string
+
+	// only write a new entry for the variable if it is not already in the map
+	_, variableExists := renamedVariables[varName]
+	if !variableExists {
+		// only write if we found a new shortName
+		newShortName, shortNameFound := shortNames.nextShortName(varName)
+		if shortNameFound {
+			renamedVariables[varName] = newShortName
+			overflow1, _ = buffer.Skim()
+			buffer.Push(" ")
+			overflow2, _ = buffer.Skim()
+			buffer.Push(newShortName)
+		}
+	}
+	return overflow1 + overflow2
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("No file provided. Please provide a filepath as argument")
@@ -145,6 +206,7 @@ func main() {
 	var renamedVariables = make(map[string]string)
 	var shortNames = NewShortNames()
 
+	// TODO move scanner initialization to function?
 	var s scanner.Scanner
 	s.Init(strings.NewReader(string(code)))
 	// sanner ignores comments, so those will be removed!
@@ -162,48 +224,30 @@ func main() {
 		replacement, exists := renamedVariables[tokenText]
 		if exists {
 			buffer.Replace(0, replacement)
-			// } else {
-			//   file.Write([]byte(tokenText))
 		}
 
 		// is it a variable declaration with var?
 		if isVariable(tokenText) {
-			s.Scan() // space
-			s.Scan() // var name
-			varName := s.TokenText()
-			// s.Scan() // space
-			// s.Scan() // type or =
-			// varType := s.TokenText()
-			// TODO this should be a function to be reused for other cases (short hand assignment and params)
-
-			// only write a new entry for the variable if it is not already in the map
-			_, variableExists := renamedVariables[varName]
-			if !variableExists {
-				// only write if we found a new shortName
-				newShortName, shortNameFound := shortNames.nextShortName( /*varType, */ varName)
-				if shortNameFound {
-					renamedVariables[varName] = newShortName
-					buffer.Push("")
-					buffer.Push(newShortName)
-					// file.Write([]byte(" " + newShortName [> + " " + varType<]))
-				}
-			}
+			overflow := handleVar(&s, tokenText, renamedVariables, shortNames, buffer)
+			file.Write([]byte(overflow))
+		}
+		// find variables assigned with :=
+		if tokenText == "=" {
+			handleShortAssignment(renamedVariables, shortNames, buffer)
 		}
 
+		// TODO find function params ?
+		// TODO function return values ?
+
+		// if the buffer is full, we skim the first entry and write it
 		tokenToWrite, bufferFull := buffer.Skim()
 		if bufferFull {
 			file.Write([]byte(tokenToWrite))
 		}
 
-		// TODO find variables assigned with :=
-
-		// TODO find function params
-
-		// TODO function return values
-
 		// fmt.Printf("%s: %s\n", s.Position, tokenText)
 	}
-	// empty the buffer
+	// empty the buffer after everything was read
 	for token, ok := buffer.Shift(); ok; token, ok = buffer.Shift() {
 		file.Write([]byte(token))
 	}
