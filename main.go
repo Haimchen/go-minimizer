@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 	"text/scanner"
 )
@@ -53,21 +54,37 @@ func isVariable(token string) bool {
 func main() {
 	code, err := ioutil.ReadFile("./data/simple.go")
 	check(err)
-	// fmt.Print(string(code))
+
+	// TODO create file name dynamically from original file name
+	file, err := os.Create("./data/simple_min.go")
+	check(err)
+	defer file.Close()
 
 	var renamedVariables = make(map[string]string)
 	var shortNames = NewShortNames()
 
 	var s scanner.Scanner
 	s.Init(strings.NewReader(string(code)))
+	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' ' // don't skip tab and newline
 
-	//
+	// scanner ignores comments and whitespace by defaut!
 	for token := s.Scan(); token != scanner.EOF; token = s.Scan() {
 		tokenText := s.TokenText()
+
+		// is tokenText a word that needs to be replaced?
+		replacement, exists := renamedVariables[tokenText]
+		if exists {
+			file.Write([]byte(replacement))
+		} else {
+			file.Write([]byte(tokenText))
+		}
+
 		if isVariable(tokenText) {
-			s.Scan()
+			s.Scan() // space
+			s.Scan() // var name
 			varName := s.TokenText()
-			s.Scan()
+			s.Scan() // space
+			s.Scan() // type
 			varType := s.TokenText()
 			// TODO this should be a function to be reused for other cases (short hand assignment and params)
 
@@ -78,6 +95,7 @@ func main() {
 				newShortName, shortNameFound := shortNames.nextShortName(varType, varName)
 				if shortNameFound {
 					renamedVariables[varName] = newShortName
+					file.Write([]byte(" " + newShortName + " " + varType))
 				}
 			}
 		}
@@ -96,8 +114,7 @@ func main() {
 	}
 
 	// scan again and write everything with updates
-	// can we do it in one loop?
-	// would automatically exclude package stuff and only replace declared variables names
+	// can't do it in the same loop, scanner removes all whitespace and code would look horrible
 
 	// replace:
 	// words from the map
