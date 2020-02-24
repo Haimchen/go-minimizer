@@ -195,6 +195,15 @@ func handleVar(s *scanner.Scanner, tokenText string, renamedVariables map[string
 	return overflow1 + overflow2
 }
 
+func NewScanner(input []byte) *scanner.Scanner {
+	var s scanner.Scanner
+	s.Init(strings.NewReader(string(input)))
+	// scanner ignores comments, so those will be removed!
+	// don't skip any whitespace while scanning
+	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' '
+	return &s
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("No file provided. Please provide a filepath as argument")
@@ -214,19 +223,15 @@ func main() {
 	var renamedVariables = make(map[string]string)
 	var shortNames = NewShortNames()
 
-	// TODO move scanner initialization to function?
-	var s scanner.Scanner
-	s.Init(strings.NewReader(string(code)))
-	// sanner ignores comments, so those will be removed!
-	// don't skip any whitespace while scanning
-	s.Whitespace ^= 1<<'\t' | 1<<'\n' | 1<<'\v' | 1<<'\f' | 1<<'\r' | 1<<' '
+	s := NewScanner(code)
 
 	// create the read buffer
 	buffer := NewBuffer(4)
 
 	for token := s.Scan(); token != scanner.EOF; token = s.Scan() {
 		tokenText := s.TokenText()
-		// TODO check for multipe whitespace tokens in a row and only keep one
+		// check for multipe space tokens in a row and only keep one
+		// removing multiple whitespace tokens is harder, because it may remove linebreaks with tabs after them :(
 		prevToken, hasPrev := buffer.Read(0)
 		if hasPrev && isSpaceString(tokenText) && isSpaceString(prevToken) {
 			buffer.Replace(0, tokenText)
@@ -242,7 +247,7 @@ func main() {
 
 		// is it a variable declaration with var?
 		if isVariable(tokenText) {
-			overflow := handleVar(&s, tokenText, renamedVariables, shortNames, buffer)
+			overflow := handleVar(s, tokenText, renamedVariables, shortNames, buffer)
 			file.Write([]byte(overflow))
 		}
 		// find variables assigned with :=
@@ -251,7 +256,7 @@ func main() {
 		}
 
 		// TODO find function params ?
-		// TODO function return values ?
+		// TODO named function return values ?
 
 		// if the buffer is full, we skim the first entry and write it
 		tokenToWrite, bufferFull := buffer.Skim()
