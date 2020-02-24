@@ -128,12 +128,20 @@ func outputFileName(inputFile string) string {
 	return outputFile
 }
 
-func isWord(whiteSpaceOrWord string) bool {
-	var isSpace bool
-	if len(whiteSpaceOrWord) == 1 {
-		runes := []rune(whiteSpaceOrWord)
-		isSpace = unicode.IsSpace(runes[0])
+func isSpaceString(token string) bool {
+	return token == " "
+}
+
+func isWhiteSpace(token string) bool {
+	if len(token) == 1 {
+		runes := []rune(token)
+		return unicode.IsSpace(runes[0])
 	}
+	return false
+}
+
+func isWord(whiteSpaceOrWord string) bool {
+	isSpace := isWhiteSpace(whiteSpaceOrWord)
 	isEmpty := len(whiteSpaceOrWord) == 0
 
 	return !isSpace && !isEmpty
@@ -218,7 +226,13 @@ func main() {
 
 	for token := s.Scan(); token != scanner.EOF; token = s.Scan() {
 		tokenText := s.TokenText()
-		buffer.Push(tokenText)
+		// TODO check for multipe whitespace tokens in a row and only keep one
+		prevToken, hasPrev := buffer.Read(0)
+		if hasPrev && isSpaceString(tokenText) && isSpaceString(prevToken) {
+			buffer.Replace(0, tokenText)
+		} else {
+			buffer.Push(tokenText)
+		}
 
 		// is tokenText a word that needs to be replaced?
 		replacement, exists := renamedVariables[tokenText]
